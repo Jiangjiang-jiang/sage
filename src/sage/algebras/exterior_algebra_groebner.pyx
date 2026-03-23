@@ -113,6 +113,24 @@ cdef class GBElement:
             return rich_to_bool(op, 0)
         return richcmp(self.elt, (<GBElement> other).elt, op)
 
+    def __len__(self):
+        """
+        Return the length of ``self``, which is the number of terms in the
+        underlying element.
+
+        EXAMPLES::
+
+            sage: from sage.algebras.exterior_algebra_groebner import GBElement
+            sage: E.<a,b,c,d> = ExteriorAlgebra(QQ)
+            sage: X = GBElement(a, a.leading_support(), 1)
+            sage: len(X)
+            1
+            sage: Y = GBElement(a*b + b + a + 2, (a*b).leading_support(), 3)
+            sage: len(Y)
+            4
+        """
+        return len(self.elt)
+
 
 cdef class GroebnerStrategy:
     """
@@ -301,6 +319,7 @@ cdef class GroebnerStrategy:
         Generate all of the S-polynomials to remove the ambiguities.
         """
         cdef GBElement f0, f1
+        cdef set additions
 
         cdef set L = set()
         if self.side != 1:  # We compute a left Gröbner basis for homogeneous two-sided ideals
@@ -333,8 +352,8 @@ cdef class GroebnerStrategy:
         monL.difference_update(done)
 
         while monL:
-            # m = max(monL, key=self.bitset_to_int) # self.int_to_bitset(max(self.bitset_to_int(k) for k in monL))
-            # monL.remove(m)
+            #m = max(monL, key=self.bitset_to_int) # self.int_to_bitset(max(self.bitset_to_int(k) for k in monL))
+            #monL.remove(m)
             m = monL.pop()
             done.add(m)
             mbs = self.int_to_bitset(m)
@@ -364,13 +383,93 @@ cdef class GroebnerStrategy:
         cdef Py_ssize_t i
         from sage.matrix.constructor import matrix
         cdef Integer r = self.r
-        cdef Matrix M = matrix(
-            {(i, r - self.bitset_to_int(<FrozenBitset> m)): c
-             for i, f in enumerate(L)
-             for m, c in (<GBElement> f).elt._monomial_coefficients.items()},
-            sparse=True)
+        cdef Matrix M = matrix({(i, r - self.bitset_to_int(<FrozenBitset> m)): c
+                    for i, f in enumerate(L)
+                    for m, c in (<GBElement> f).elt._monomial_coefficients.items()},
+                   sparse=True)
         M.echelonize()  # Do this in place
         return M
+
+    cdef inline list reduction(self, set L, list G):
+        """
+        Perform the reduction of ``L`` mod ``G`` using custom in-place
+        Gaussian elimination, avoiding the construction of a dense matrix.
+        """
+        L = self.preprocessing(L, G)
+        cdef set lead_supports = set((<GBElement> f).lsi for f in L)
+        cdef Py_ssize_t i
+        cdef GBElement f, g
+        cdef list modified
+        cdef Integer ind, k
+
+        cdef dict M = {}
+        for f in L:
+            if f.lsi in M:
+                M[f.lsi].append(f)
+            else:
+                M[f.lsi] = [f]
+        modified = list(M)
+        cdef set new_mod
+        cdef dict mc, Mp, temp
+        cdef list cur
+        while modified:
+            sig_check()
+
+            modified.sort()
+            new_mod = set()
+            for i, ind in enumerate(modified):
+                sig_check()
+                if len(M[ind]) != 1:
+                    new_mod.add(ind)
+                    continue
+                f = <GBElement> (M[ind][0])
+                f.elt *= ~f.elt._monomial_coefficients[f.ls]
+                mc = f.elt._monomial_coefficients
+                for k in modified[i+1:]:
+                    for g in M[k]:
+                        cp = g.elt[f.ls]
+                        if cp:
+                            temp = dict(g.elt._monomial_coefficients)
+                            iaxpy(-cp, mc, temp)
+                            g.elt = self.E.element_class(self.E, temp)
+
+            modified = list(new_mod)
+            new_mod = set()
+            Mp = {}
+
+            for ind in modified:
+                sig_check()
+                cur = sorted(set(M[ind]), key=len)
+                f = cur.pop()
+                f.elt *= ~f.elt._monomial_coefficients[f.ls]
+                mc = f.elt._monomial_coefficients
+                M[ind] = [f]
+                for f in cur:
+                    temp = dict(f.elt._monomial_coefficients)
+                    f = GBElement(self.E.element_class(self.E, temp), f.ls, f.lsi)
+                    iaxpy(-f.elt[f.ls], mc, f.elt._monomial_coefficients)
+                    if not f.elt._monomial_coefficients:
+                        continue
+                    k = <Integer> max(self.bitset_to_int(k) for k in f.elt._monomial_coefficients)
+                    f.lsi = k
+                    f.ls = self.int_to_bitset(k)
+                    c = f.elt._monomial_coefficients[f.ls]
+                    for X in f.elt._monomial_coefficients:
+                        f.elt._monomial_coefficients[X] /= c
+                    if f.lsi in Mp:
+                        Mp[f.lsi].append(f)
+                    else:
+                        Mp[f.lsi] = [f]
+                    new_mod.add(f.lsi)
+            for ind in Mp:
+                if ind in M:
+                    M[ind].extend(Mp[ind])
+                else:
+                    M[ind] = Mp[ind]
+            new_mod.difference_update(modified)
+            modified.extend(new_mod)
+
+        return sum((M[k] for k in M if k not in lead_supports), [])
 
     def compute_groebner(self, reduced=True):
         r"""
@@ -426,7 +525,7 @@ cdef class GroebnerStrategy:
         cdef GBElement f0, f1
         cdef list G = [], Gp
         cdef dict constructed = {}
-        cdef set L, lead_supports
+        cdef set L
         cdef CliffordAlgebraElement f
         cdef Integer r = self.r
 
@@ -463,12 +562,7 @@ cdef class GroebnerStrategy:
 
             # Perform the reduction
             L = self.S_polynomials(Pp)
-            L = self.preprocessing(L, G)
-            M = self.echelonize(L)
-            lead_supports = set((<GBElement> f).lsi for f in L)
-            Gp = [self.build_elt_from_vec(<FreeModuleElement> M[i], p) for i, p in enumerate(M.pivots())
-                  if r - Integer(p) not in lead_supports]
-            del lead_supports
+            Gp = self.reduction(L, G)
             Gp.extend(self.additional_products(Gp, G + Gp))
             # Add the elements Gp to G when a new element is found
             for f0 in Gp:
@@ -555,7 +649,7 @@ cdef class GroebnerStrategy:
             sage: I._groebner_strategy.groebner_basis
             (x, y + z)
         """
-        if self.groebner_basis == [(None,)]:
+        if self.groebner_basis == (None,):
             raise ValueError("Gröbner basis not yet computed")
         cdef list G = [self.build_elt(f) for f in self.groebner_basis]
         self.reduced_gb(G)

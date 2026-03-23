@@ -4,9 +4,8 @@ Exterior algebras Gröbner bases
 from sage.data_structures.bitset cimport FrozenBitset
 from sage.rings.integer cimport Integer
 from sage.algebras.clifford_algebra_element cimport CliffordAlgebraElement
-from sage.modules.free_module_element cimport FreeModuleElement
 from sage.structure.parent cimport Parent
-from sage.structure.element cimport MonoidElement, Matrix
+from sage.structure.element cimport MonoidElement
 
 cdef long degree(FrozenBitset X) noexcept
 cdef CliffordAlgebraElement build_monomial(Parent E, FrozenBitset supp)
@@ -31,7 +30,6 @@ cdef class GroebnerStrategy:
     cdef inline partial_S_poly_right(self, GBElement f, GBElement g)
 
     cdef inline GBElement build_elt(self, CliffordAlgebraElement f)
-    cdef inline GBElement build_elt_from_vec(self, FreeModuleElement data, int p)
     cdef inline GBElement prod_GB_term(self, GBElement f, FrozenBitset t)
     cdef inline GBElement prod_term_GB(self, FrozenBitset t, GBElement f)
 
@@ -39,7 +37,7 @@ cdef class GroebnerStrategy:
     cdef inline list additional_products(self, list elts, list G)
     cdef inline set S_polynomials(self, list P)
     cdef inline set preprocessing(self, set L, list G)
-    cdef inline Matrix echelonize(self, L)
+    cdef inline list echelonize(self, L)
 
     cpdef CliffordAlgebraElement reduce(self, CliffordAlgebraElement f)
     cdef bint reduce_single(self, CliffordAlgebraElement f, CliffordAlgebraElement g) except -1
