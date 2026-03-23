@@ -40,6 +40,7 @@ cdef class GroebnerStrategy:
     cdef inline set S_polynomials(self, list P)
     cdef inline set preprocessing(self, set L, list G)
     cdef inline Matrix echelonize(self, L)
+    cdef inline list reduction(self, set L, list G)
 
     cpdef CliffordAlgebraElement reduce(self, CliffordAlgebraElement f)
     cdef bint reduce_single(self, CliffordAlgebraElement f, CliffordAlgebraElement g) except -1
