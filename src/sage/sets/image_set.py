@@ -25,7 +25,7 @@ from sage.categories.enumerated_sets import EnumeratedSets
 from sage.misc.cachefunc import cached_method
 from sage.rings.infinity import Infinity
 from sage.rings.integer import Integer
-from sage.structure.element import Expression
+from sage.structure.element import Element, Expression
 from sage.structure.parent import Parent
 
 from .set import Set_base, Set_add_sub_operators, Set_boolean_operators
@@ -207,6 +207,34 @@ class ImageSubobject(Parent):
         """
         return hash((self._map, self._domain_subset))
 
+    def __call__(self, x):
+        """
+        Construct an element of ``self`` from ``x``.
+
+        When an ``inverse`` was provided and ``x`` is not a Sage
+        :class:`~sage.structure.element.Element`, this calls
+        :meth:`_element_constructor_` directly, bypassing the coercion
+        system (which requires :class:`~sage.structure.element.Element`
+        return values). This mirrors the workaround in
+        :class:`~sage.sets.finite_enumerated_set.FiniteEnumeratedSet`.
+
+        EXAMPLES::
+
+            sage: from sage.sets.image_set import ImageSubobject
+            sage: from sage.combinat.cartesian_product import CartesianProduct_iters
+            sage: cp = CartesianProduct_iters(['a', 'b'], ['x', 'y'])
+            sage: I = cp.map(tuple, is_injective=True, inverse=cp._element_constructor_)
+            sage: I(('a', 'x'))
+            ('a', 'x')
+            sage: I(('a', 'z'))
+            Traceback (most recent call last):
+            ...
+            ValueError: ('a', 'z') not in ...
+        """
+        if self._inverse is not None and not isinstance(x, Element):
+            return self._element_constructor_(x)
+        return super().__call__(x)
+
     def __contains__(self, x):
         """
         Return whether ``x`` is in this image set.
@@ -238,15 +266,9 @@ class ImageSubobject(Parent):
         if self._inverse is not None:
             try:
                 preimage = self._inverse(x)
-            except (TypeError, ValueError):
+            except Exception:
                 return False
-            if preimage not in self._domain_subset:
-                return False
-            try:
-                preimage = self._map.domain()(preimage)
-            except TypeError:
-                pass
-            return self._map(preimage) == x
+            return preimage in self._domain_subset
         return super().__contains__(x)
 
     def _element_constructor_(self, x):
